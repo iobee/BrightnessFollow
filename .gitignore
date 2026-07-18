@@ -1,0 +1,17 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+
+*.app
+*.app.previous
+*.zip
+old-builds/
+qa-*.png
+
+# Never commit signing identities or private keys.
+*.cer
+*.crt
+*.key
+*.p12
+*.pem
