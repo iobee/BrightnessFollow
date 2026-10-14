@@ -15,3 +15,8 @@ qa-*.png
 *.key
 *.p12
 *.pem
+
+# Local release configuration and generated packages.
+.env.release.local
+*.dmg
+__pycache__/

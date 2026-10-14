@@ -12,5 +12,15 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Check release scripts
+        run: |
+          for script in Scripts/*.sh; do
+            case "$(head -n1 "$script")" in
+              *bash) bash -n "$script" ;;
+              *) zsh -n "$script" ;;
+            esac
+          done
+          /usr/bin/python3 Scripts/test-ci-checkpoint.py
+          /usr/bin/python3 -m unittest discover -s Tests/ReleasePipelineTests -v
       - name: Test
         run: swift test --disable-sandbox

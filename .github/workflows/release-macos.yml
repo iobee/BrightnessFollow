@@ -1,0 +1,113 @@
+name: Release macOS
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified version to GitHub Releases
+        type: boolean
+        default: false
+      resume_run_id:
+        description: Previous release run at the same commit (leave empty for a new build)
+        type: string
+        default: ''
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-macos-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      actions: read
+    env:
+      BRIGHTNESS_FOLLOW_SIGNING_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
+      BRIGHTNESS_FOLLOW_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
+      BRIGHTNESS_FOLLOW_NOTARY_PROFILE: release-notary
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release source and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor HEAD origin/main || { echo 'Merge this source into main before signing a release.' >&2; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || exit 1
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          [[ "$(uname -m)" == arm64 ]] || { echo 'This release needs an arm64 runner.' >&2; exit 1; }
+          [[ "$(xcodebuild -version | head -n 1 | awk '{print $2}' | cut -d. -f1)" -ge 26 ]] || exit 1
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            [[ "$GITHUB_REF" == "refs/tags/v$version" ]] || { echo 'Tag and application version differ.' >&2; exit 1; }
+          fi
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Check scripts and release recovery tests
+        run: |
+          for script in Scripts/*.sh; do
+            case "$(head -n1 "$script")" in
+              *bash) bash -n "$script" ;;
+              *) zsh -n "$script" ;;
+            esac
+          done
+          python3 Scripts/test-ci-checkpoint.py
+          python3 -m unittest discover -s Tests/ReleasePipelineTests -v
+      - name: Restore the exact signed build or initialize its checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+        run: python3 Scripts/ci-checkpoint.py initialize .build/releases
+      - name: Configure temporary signing keychain
+        env:
+          MACOS_SIGN_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
+          MACOS_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: bash Scripts/ci-signing.sh setup
+      - name: Build, sign, notarize and verify ZIP and DMG
+        env:
+          BRIGHTNESS_FOLLOW_SIGNING_KEYCHAIN: ${{ runner.temp }}/release-signing.keychain-db
+          BRIGHTNESS_FOLLOW_NOTARY_KEYCHAIN: ${{ runner.temp }}/release-signing.keychain-db
+        run: ./Scripts/release.sh --wait-seconds 1200
+      - name: Save signed build and notarization receipts
+        if: always()
+        id: checkpoint
+        run: python3 Scripts/ci-checkpoint.py snapshot .build/releases
+      - name: Upload resumable checkpoint
+        if: always() && steps.checkpoint.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checkpoint
+          path: ${{ runner.temp }}/release-checkpoint.zip
+          overwrite: true
+          retention-days: 14
+          compression-level: 0
+      - name: Upload verified distribution files
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrightnessFollow-${{ env.RELEASE_VERSION }}-arm64
+          include-hidden-files: true
+          path: |
+            .build/releases/*/*.zip
+            .build/releases/*/*.dmg
+            .build/releases/*/release.json
+            .build/releases/*/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Publish the verified release
+        if: success() && (github.event_name == 'push' || inputs.publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: /usr/bin/python3 Scripts/publish-release.py
+      - name: Remove signing credentials from the runner
+        if: always()
+        run: bash Scripts/ci-signing.sh cleanup
