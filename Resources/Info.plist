@@ -10,6 +10,10 @@
     <string>BrightnessFollow</string>
     <key>CFBundleIdentifier</key>
     <string>com.nick.brightnessfollow</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -17,9 +21,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.0</string>
+    <string>0.3.6</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>9</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSMultipleInstancesProhibited</key>
